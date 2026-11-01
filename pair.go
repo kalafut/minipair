@@ -31,7 +31,7 @@ import (
 	"math"
 	"slices"
 
-	mwm "github.com/kalafut/minipair/internal/blossom"
+	mwm "github.com/std000/mvm-go"
 )
 
 // Player is a tournament entrant.
