@@ -264,15 +264,31 @@ func TestSimulatedTournaments(t *testing.T) {
 		ps := field(ratings...)
 		method := Method(trial % 2)
 
+		// A few random exclusions (siblings, teammates, ...).
+		var excl []Exclusion
+		forbidden := map[idPair]bool{}
+		for range rng.IntN(n / 2) {
+			a, b := rng.IntN(n), rng.IntN(n)
+			if a == b {
+				continue
+			}
+			x := Exclusion{ps[a].ID, ps[b].ID}
+			excl = append(excl, x)
+			forbidden[makeIDPair(x.A, x.B)] = true
+		}
+
 		var h []Game
 		for rd := range rounds {
-			r := mustPair(t, ps, h, Options{Method: method})
+			r := mustPair(t, ps, h, Options{Method: method, Exclusions: excl})
 
 			placed := map[string]int{}
 			st := buildStats(h)
 			for _, g := range r.Pairings {
 				placed[g.White.ID]++
 				placed[g.Black.ID]++
+				if forbidden[makeIDPair(g.White.ID, g.Black.ID)] {
+					t.Fatalf("trial %d round %d: excluded pair %s-%s", trial, rd+1, g.White.ID, g.Black.ID)
+				}
 				if s := st[g.White.ID]; s != nil && s.opponents[g.Black.ID] {
 					t.Fatalf("trial %d round %d: rematch %s-%s", trial, rd+1, g.White.ID, g.Black.ID)
 				}

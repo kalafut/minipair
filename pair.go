@@ -11,6 +11,9 @@
 // below it, so no amount of improvement in a lower criterion can justify a
 // worse result in a higher one. From most to least important:
 //
+//  0. Exclusions (Options.Exclusions) are absolute: those pairs are never
+//     made. If they leave no way to pair everyone, PairRound returns
+//     ErrNoPairing.
 //  1. No rematches, and no second bye.
 //  2. Don't violate absolute color preferences (two-color imbalance, or the
 //     same color three times running).
@@ -27,6 +30,7 @@ package minipair
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -67,10 +71,25 @@ const (
 	Closest
 )
 
+// Exclusion names two players who must never be paired with each other,
+// e.g. siblings or teammates. Order does not matter.
+type Exclusion struct {
+	A, B string
+}
+
 // Options controls PairRound. The zero value is a reasonable default.
 type Options struct {
 	Method Method
+	// Exclusions lists pairs that must never meet. Entries naming players
+	// not in the current field are ignored, so a list can be kept for the
+	// whole event even as players withdraw.
+	Exclusions []Exclusion
 }
+
+// ErrNoPairing is returned when exclusions make it impossible to pair
+// every player (for example, the only two remaining players are excluded
+// from playing each other).
+var ErrNoPairing = errors.New("no pairing satisfies the exclusions")
 
 // PairRound pairs the next round for players given the history of previous
 // rounds (nil or empty for round 1). Only the players passed in are paired;
@@ -79,12 +98,16 @@ func PairRound(players []Player, history []Game, opts Options) (Round, error) {
 	if err := validate(players, history); err != nil {
 		return Round{}, err
 	}
+	excluded, err := exclusionSet(opts.Exclusions)
+	if err != nil {
+		return Round{}, err
+	}
 	es := entries(players, buildStats(history))
 	if len(es) == 0 {
 		return Round{}, nil
 	}
 
-	pairs, bye, err := match(es, opts.Method)
+	pairs, bye, err := match(es, opts.Method, excluded)
 	if err != nil {
 		return Round{}, err
 	}
@@ -221,9 +244,33 @@ type edge struct {
 	c    cost
 }
 
+type idPair [2]string
+
+func makeIDPair(a, b string) idPair {
+	if a > b {
+		a, b = b, a
+	}
+	return idPair{a, b}
+}
+
+func exclusionSet(xs []Exclusion) (map[idPair]bool, error) {
+	set := make(map[idPair]bool, len(xs))
+	for i, x := range xs {
+		switch {
+		case x.A == "" || x.B == "":
+			return nil, fmt.Errorf("exclusion %d: empty player ID", i)
+		case x.A == x.B:
+			return nil, fmt.Errorf("exclusion %d: %q excluded from themself", i, x.A)
+		}
+		set[makeIDPair(x.A, x.B)] = true
+	}
+	return set, nil
+}
+
 // match returns rank-index pairs (lower index first) forming a minimum-cost
-// perfect matching, plus the index of the bye player (-1 if none).
-func match(es []entry, m Method) ([][2]int, int, error) {
+// perfect matching, plus the index of the bye player (-1 if none). Excluded
+// pairs get no edge at all, so they can never be chosen.
+func match(es []entry, m Method, excluded map[idPair]bool) ([][2]int, int, error) {
 	n := len(es)
 	ngroups := es[n-1].group + 1
 	if ngroups > maxGroups {
@@ -232,6 +279,9 @@ func match(es []entry, m Method) ([][2]int, int, error) {
 	var edges []edge
 	for i := range n {
 		for j := i + 1; j < n; j++ {
+			if excluded[makeIDPair(es[i].ID, es[j].ID)] {
+				continue
+			}
 			edges = append(edges, edge{i, j, gameCost(es[i], es[j], ngroups, m)})
 		}
 	}
@@ -243,13 +293,17 @@ func match(es []entry, m Method) ([][2]int, int, error) {
 			edges = append(edges, edge{i, n, byeCost(es[i], i, n, ngroups)})
 		}
 	}
+	if len(edges) == 0 {
+		return nil, 0, ErrNoPairing
+	}
 	totals, err := flatten(edges, nodes/2)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	// The matcher maximizes weight, so invert costs. The +1 keeps every
-	// weight positive; maxCardinality guarantees everyone is paired.
+	// weight positive; maxCardinality pairs everyone whenever the
+	// (possibly incomplete) graph allows it.
 	maxCost := slices.Max(totals)
 	g := make([]mwm.GraphEdge, len(edges))
 	for k, e := range edges {
@@ -257,7 +311,7 @@ func match(es []entry, m Method) ([][2]int, int, error) {
 	}
 	result := mwm.NewMaximumWeightedMatching().MaxWeightMatching(g, true)
 	if len(result) != nodes/2 {
-		return nil, 0, fmt.Errorf("matcher paired %d of %d nodes", 2*len(result), nodes)
+		return nil, 0, ErrNoPairing
 	}
 
 	bye := -1
