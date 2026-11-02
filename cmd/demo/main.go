@@ -1,5 +1,6 @@
 // Command demo runs a simulated multi-round Swiss tournament, printing each
-// round's pairings and the final standings.
+// round's pairings and the final standings. Players from the same school
+// (shown after the slash) never meet.
 package main
 
 import (
@@ -19,17 +20,17 @@ func main() {
 	flag.Parse()
 
 	players := []minipair.Player{
-		{ID: "1", Name: "Ava", Rating: 1450},
-		{ID: "2", Name: "Ben", Rating: 820},
-		{ID: "3", Name: "Chloe", Rating: 1210},
-		{ID: "4", Name: "Diego", Rating: 1580},
-		{ID: "5", Name: "Emma", Rating: 990},
-		{ID: "6", Name: "Finn", Rating: 1330},
-		{ID: "7", Name: "Grace", Rating: 1100},
-		{ID: "8", Name: "Hugo", Rating: 1020},
-		{ID: "9", Name: "Isla", Rating: 640},
-		{ID: "10", Name: "Jonah", Rating: 1260},
-		{ID: "11", Name: "Kai", Rating: 900},
+		{ID: "1", Name: "Ava", Rating: 1450, Team: "North"},
+		{ID: "2", Name: "Ben", Rating: 820, Team: "North"},
+		{ID: "3", Name: "Chloe", Rating: 1210, Team: "South"},
+		{ID: "4", Name: "Diego", Rating: 1580, Team: "North"},
+		{ID: "5", Name: "Emma", Rating: 990, Team: "South"},
+		{ID: "6", Name: "Finn", Rating: 1330, Team: "East"},
+		{ID: "7", Name: "Grace", Rating: 1100, Team: "East"},
+		{ID: "8", Name: "Hugo", Rating: 1020, Team: "South"},
+		{ID: "9", Name: "Isla", Rating: 640, Team: "North"},
+		{ID: "10", Name: "Jonah", Rating: 1260, Team: "East"},
+		{ID: "11", Name: "Kai", Rating: 900, Team: "South"},
 	}
 
 	opts := minipair.Options{}
@@ -57,12 +58,12 @@ func main() {
 		fmt.Printf("== Round %d ==\n", rd)
 		for _, g := range r.Pairings {
 			res := play(rng, g.White.Rating, g.Black.Rating)
-			fmt.Printf("%2d  %-18s %-7s %-18s\n", g.Board,
+			fmt.Printf("%2d  %-20s %-7s %-20s\n", g.Board,
 				label(g.White, score), resultStr(res), label(g.Black, score))
 			history = append(history, minipair.Game{White: g.White.ID, Black: g.Black.ID, Result: res})
 		}
 		if r.Bye != nil {
-			fmt.Printf("    %-18s bye\n", label(*r.Bye, score))
+			fmt.Printf("    %-20s bye\n", label(*r.Bye, score))
 			history = append(history, minipair.Game{White: r.Bye.ID, Result: minipair.WhiteWins})
 		}
 		fmt.Println()
@@ -103,5 +104,5 @@ func resultStr(r minipair.Result) string {
 }
 
 func label(p minipair.Player, score map[string]float64) string {
-	return fmt.Sprintf("%s %d [%.1f]", p.Name, p.Rating, score[p.ID])
+	return fmt.Sprintf("%s/%s %d [%.1f]", p.Name, p.Team[:1], p.Rating, score[p.ID])
 }

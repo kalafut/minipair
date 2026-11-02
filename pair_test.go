@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"testing"
+
+	mwm "github.com/std000/mvm-go"
 )
 
 // field returns players with the given ratings and IDs p1..pn.
@@ -264,7 +266,14 @@ func TestSimulatedTournaments(t *testing.T) {
 		ps := field(ratings...)
 		method := Method(trial % 2)
 
-		// A few random exclusions (siblings, teammates, ...).
+		// Some players belong to small teams.
+		for i := range ps {
+			if rng.Float64() < 0.4 {
+				ps[i].Team = fmt.Sprintf("T%d", rng.IntN(1+n/6))
+			}
+		}
+
+		// A few random exclusions (siblings, ...).
 		var excl []Exclusion
 		forbidden := map[idPair]bool{}
 		for range rng.IntN(n / 2) {
@@ -289,14 +298,17 @@ func TestSimulatedTournaments(t *testing.T) {
 				if forbidden[makeIDPair(g.White.ID, g.Black.ID)] {
 					t.Fatalf("trial %d round %d: excluded pair %s-%s", trial, rd+1, g.White.ID, g.Black.ID)
 				}
-				if s := st[g.White.ID]; s != nil && s.opponents[g.Black.ID] {
-					t.Fatalf("trial %d round %d: rematch %s-%s", trial, rd+1, g.White.ID, g.Black.ID)
+				if sameTeam(g.White, g.Black) {
+					t.Fatalf("trial %d round %d: teammates %s-%s", trial, rd+1, g.White.ID, g.Black.ID)
+				}
+				if s := st[g.White.ID]; s != nil && s.opponents[g.Black.ID] && cleanPairingExists(ps, h, excl) {
+					t.Fatalf("trial %d round %d: avoidable rematch %s-%s", trial, rd+1, g.White.ID, g.Black.ID)
 				}
 			}
 			if r.Bye != nil {
 				placed[r.Bye.ID]++
-				if s := st[r.Bye.ID]; s != nil && s.hadBye {
-					t.Fatalf("trial %d round %d: second bye for %s", trial, rd+1, r.Bye.ID)
+				if s := st[r.Bye.ID]; s != nil && s.hadBye && cleanPairingExists(ps, h, excl) {
+					t.Fatalf("trial %d round %d: avoidable second bye for %s", trial, rd+1, r.Bye.ID)
 				}
 			}
 			if len(placed) != n {
@@ -322,4 +334,35 @@ func TestSimulatedTournaments(t *testing.T) {
 			}
 		}
 	}
+}
+
+// cleanPairingExists reports whether ps can be fully paired with no
+// teammates, exclusions, rematches, or second byes. It runs the matcher on
+// a graph containing only the allowed edges (unit weights).
+func cleanPairingExists(ps []Player, h []Game, excl []Exclusion) bool {
+	st := buildStats(h)
+	xs, _ := exclusionSet(excl)
+	var g []mwm.GraphEdge
+	for i := range ps {
+		for j := i + 1; j < len(ps); j++ {
+			a, b := ps[i], ps[j]
+			if sameTeam(a, b) || xs[makeIDPair(a.ID, b.ID)] {
+				continue
+			}
+			if s := st[a.ID]; s != nil && s.opponents[b.ID] {
+				continue
+			}
+			g = append(g, mwm.GraphEdge{Node1: int64(i), Node2: int64(j), Weight: 1})
+		}
+	}
+	nodes := len(ps)
+	if nodes%2 == 1 {
+		for i, p := range ps {
+			if s := st[p.ID]; s == nil || !s.hadBye {
+				g = append(g, mwm.GraphEdge{Node1: int64(i), Node2: int64(nodes), Weight: 1})
+			}
+		}
+		nodes++
+	}
+	return len(mwm.NewMaximumWeightedMatching().MaxWeightMatching(g, true)) == nodes/2
 }

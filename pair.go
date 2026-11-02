@@ -11,18 +11,18 @@
 // below it, so no amount of improvement in a lower criterion can justify a
 // worse result in a higher one. From most to least important:
 //
-//  0. Exclusions (Options.Exclusions) are absolute: those pairs are never
-//     made. If they leave no way to pair everyone, PairRound returns
-//     ErrNoPairing.
+//  0. Teammates (Player.Team) and exclusions (Options.Exclusions) are
+//     absolute: those pairs are never made. If they leave no way to pair
+//     everyone, PairRound returns ErrNoPairing.
 //  1. No rematches, and no second bye.
 //  2. Don't violate absolute color preferences (two-color imbalance, or the
 //     same color three times running).
-//  3. Pair within score groups. Floating a player out of a higher group
+//  3. The bye goes to a player in the lowest possible score group.
+//  4. Pair within score groups. Floating a player out of a higher group
 //     costs more than floating two players out of the group below it, so
-//     top groups are kept intact first (as in the Dutch system). The bye
-//     goes to the lowest score group.
-//  4. Satisfy color preferences.
-//  5. Within a score group, follow Method (top half vs bottom half by
+//     top groups are kept intact first (as in the Dutch system).
+//  5. Satisfy color preferences.
+//  6. Within a score group, follow Method (top half vs bottom half by
 //     default). Players who must float to another group are taken from the
 //     bottom of the higher group and the top of the lower group; the bye
 //     goes to the lowest-rated eligible player.
@@ -43,6 +43,10 @@ type Player struct {
 	ID     string
 	Name   string
 	Rating int
+	// Team, if non-empty, names the player's team (e.g. their school).
+	// Players on the same team are never paired with each other. Note that
+	// a team larger than half the field cannot be fully paired.
+	Team string
 }
 
 // Pairing is a single game. White and Black are set by the color rules.
@@ -72,7 +76,7 @@ const (
 )
 
 // Exclusion names two players who must never be paired with each other,
-// e.g. siblings or teammates. Order does not matter.
+// e.g. siblings. Order does not matter. For whole groups, use Player.Team.
 type Exclusion struct {
 	A, B string
 }
@@ -86,10 +90,10 @@ type Options struct {
 	Exclusions []Exclusion
 }
 
-// ErrNoPairing is returned when exclusions make it impossible to pair
-// every player (for example, the only two remaining players are excluded
-// from playing each other).
-var ErrNoPairing = errors.New("no pairing satisfies the exclusions")
+// ErrNoPairing is returned when teams or exclusions make it impossible to
+// pair every player (for example, the only two remaining players are
+// teammates).
+var ErrNoPairing = errors.New("no pairing satisfies the team and exclusion constraints")
 
 // PairRound pairs the next round for players given the history of previous
 // rounds (nil or empty for round 1). Only the players passed in are paired;
@@ -174,6 +178,7 @@ func entries(players []Player, st map[string]*stats) []entry {
 const (
 	tierForbidden = iota
 	tierColorAbs
+	tierBye
 	tierScore
 	tierColorPref
 	tierOrder
@@ -228,13 +233,15 @@ func gameCost(a, b entry, ngroups int, m Method) cost {
 }
 
 // byeCost is the cost of giving the bye to e, the rank-th of n players.
-// The bye acts like a float to below the lowest score group.
+// The bye has its own tier, above score-group pairing: otherwise a leader's
+// bye (one player skipping every group) can look no worse than several
+// ordinary floats.
 func byeCost(e entry, rank, n, ngroups int) cost {
 	var c cost
 	if e.hadBye {
 		c[tierForbidden] = 1
 	}
-	c[tierScore] = floatCost(e.group, ngroups-1, ngroups)
+	c[tierBye] = int64(ngroups - 1 - e.group) // groups above the lowest
 	c[tierOrder] = int64(n - 1 - rank)
 	return c
 }
@@ -267,9 +274,12 @@ func exclusionSet(xs []Exclusion) (map[idPair]bool, error) {
 	return set, nil
 }
 
+func sameTeam(a, b Player) bool { return a.Team != "" && a.Team == b.Team }
+
 // match returns rank-index pairs (lower index first) forming a minimum-cost
-// perfect matching, plus the index of the bye player (-1 if none). Excluded
-// pairs get no edge at all, so they can never be chosen.
+// perfect matching, plus the index of the bye player (-1 if none).
+// Teammates and excluded pairs get no edge at all, so they can never be
+// chosen.
 func match(es []entry, m Method, excluded map[idPair]bool) ([][2]int, int, error) {
 	n := len(es)
 	ngroups := es[n-1].group + 1
@@ -279,7 +289,7 @@ func match(es []entry, m Method, excluded map[idPair]bool) ([][2]int, int, error
 	var edges []edge
 	for i := range n {
 		for j := i + 1; j < n; j++ {
-			if excluded[makeIDPair(es[i].ID, es[j].ID)] {
+			if sameTeam(es[i].Player, es[j].Player) || excluded[makeIDPair(es[i].ID, es[j].ID)] {
 				continue
 			}
 			edges = append(edges, edge{i, j, gameCost(es[i], es[j], ngroups, m)})
