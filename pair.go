@@ -26,6 +26,12 @@
 //     default). Players who must float to another group are taken from the
 //     bottom of the higher group and the top of the lower group; the bye
 //     goes to the lowest-rated eligible player.
+//
+// Field size limit: the tiers are packed into a single int64 weight, and
+// the space each tier needs grows with the number of players. Beyond
+// roughly 1000 players (in later rounds, when every tier is in use)
+// PairRound returns a "pairing costs too large to combine" error rather
+// than risk overflow. Fields within the limit are paired exactly.
 package minipair
 
 import (
