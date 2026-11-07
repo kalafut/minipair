@@ -5,7 +5,8 @@
 // Pairing is modeled as a graph problem: every player is a node, every
 // possible game is an edge, and each edge carries a cost describing how
 // undesirable that game is. A minimum-cost perfect matching (found with
-// Edmonds' blossom algorithm) gives the round's pairings.
+// Edmonds' blossom algorithm) gives the round's pairings. That engine is
+// exported as Match, for events with their own pairing rules.
 //
 // Costs are lexicographic: each criterion strictly dominates all criteria
 // below it, so no amount of improvement in a lower criterion can justify a
@@ -38,10 +39,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
-
-	mwm "github.com/std000/mvm-go"
 )
 
 // Player is a tournament entrant.
@@ -252,11 +250,6 @@ func byeCost(e entry, rank, n, ngroups int) cost {
 	return c
 }
 
-type edge struct {
-	i, j int
-	c    cost
-}
-
 type idPair [2]string
 
 func makeIDPair(a, b string) idPair {
@@ -292,13 +285,14 @@ func match(es []entry, m Method, excluded map[idPair]bool) ([][2]int, int, error
 	if ngroups > maxGroups {
 		return nil, 0, fmt.Errorf("too many distinct scores (%d, max %d)", ngroups, maxGroups)
 	}
-	var edges []edge
+	var edges []Edge
 	for i := range n {
 		for j := i + 1; j < n; j++ {
 			if sameTeam(es[i].Player, es[j].Player) || excluded[makeIDPair(es[i].ID, es[j].ID)] {
 				continue
 			}
-			edges = append(edges, edge{i, j, gameCost(es[i], es[j], ngroups, m)})
+			c := gameCost(es[i], es[j], ngroups, m)
+			edges = append(edges, Edge{A: i, B: j, Cost: c[:]})
 		}
 	}
 	nodes := n
@@ -306,70 +300,28 @@ func match(es []entry, m Method, excluded map[idPair]bool) ([][2]int, int, error
 		// A phantom node; whoever is matched to it receives the bye.
 		nodes++
 		for i := range n {
-			edges = append(edges, edge{i, n, byeCost(es[i], i, n, ngroups)})
+			c := byeCost(es[i], i, n, ngroups)
+			edges = append(edges, Edge{A: i, B: n, Cost: c[:]})
 		}
 	}
-	if len(edges) == 0 {
-		return nil, 0, ErrNoPairing
-	}
-	totals, err := flatten(edges, nodes/2)
+	matched, unmatched, err := Match(nodes, edges)
 	if err != nil {
 		return nil, 0, err
 	}
-
-	// The matcher maximizes weight, so invert costs. The +1 keeps every
-	// weight positive; maxCardinality pairs everyone whenever the
-	// (possibly incomplete) graph allows it.
-	maxCost := slices.Max(totals)
-	g := make([]mwm.GraphEdge, len(edges))
-	for k, e := range edges {
-		g[k] = mwm.GraphEdge{Node1: int64(e.i), Node2: int64(e.j), Weight: maxCost - totals[k] + 1}
-	}
-	result := mwm.NewMaximumWeightedMatching().MaxWeightMatching(g, true)
-	if len(result) != nodes/2 {
+	if len(unmatched) > 0 {
 		return nil, 0, ErrNoPairing
 	}
 
 	bye := -1
 	var pairs [][2]int
-	for _, r := range result {
-		a, b := int(min(r.First, r.Second)), int(max(r.First, r.Second))
-		if b == n {
-			bye = a
+	for _, p := range matched {
+		if p[1] == n {
+			bye = p[0]
 			continue
 		}
-		pairs = append(pairs, [2]int{a, b})
+		pairs = append(pairs, p)
 	}
 	return pairs, bye, nil
-}
-
-// maxWeight keeps the matcher's internal dual arithmetic well clear of
-// int64 overflow.
-const maxWeight = math.MaxInt64 / 16
-
-// flatten collapses tiered costs into single integers that preserve
-// lexicographic order for any matching of k edges. Each tier's unit is
-// chosen larger than the worst possible sum of all lower tiers over k edges.
-func flatten(edges []edge, k int) ([]int64, error) {
-	totals := make([]int64, len(edges))
-	for t := numTiers - 1; t >= 0; t-- {
-		var lowerMax int64
-		for _, v := range totals {
-			lowerMax = max(lowerMax, v)
-		}
-		if lowerMax > maxWeight/int64(k) {
-			return nil, fmt.Errorf("pairing costs too large to combine")
-		}
-		unit := lowerMax*int64(k) + 1
-		for i, e := range edges {
-			v := e.c[t]
-			if v != 0 && v > (maxWeight-totals[i])/unit {
-				return nil, fmt.Errorf("pairing costs too large to combine")
-			}
-			totals[i] += v * unit
-		}
-	}
-	return totals, nil
 }
 
 // assignColors decides colors for a (higher ranked) vs b on the given board.

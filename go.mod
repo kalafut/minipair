@@ -1,6 +1,6 @@
 module github.com/kalafut/minipair
 
-go 1.27.2
+go 1.26.1
 
 replace github.com/std000/mvm-go => github.com/kalafut/mvm-go v0.0.0-20261101221550-328b009c2684
 

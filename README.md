@@ -59,12 +59,43 @@ each score group instead of the traditional top-half vs. bottom-half split.
 To handle withdrawals, leave those players out of `players`. Their past
 games still count for their opponents.
 
+## Custom pairing rules
+
+`PairRound` is Swiss pairing built on a general engine, `Match`, which is
+exported for events with their own rules (a weekly club night paired by
+rating, say). Give it the nodes and the allowed pairings, each with a
+lexicographic `Cost` (earlier tiers strictly dominate later ones). It pairs
+as many nodes as it can, then minimizes the total cost tier by tier. A pair
+that must never meet gets no edge.
+
+```go
+edges := []minipair.Edge{
+	{A: 0, B: 1, Cost: minipair.Cost{0, 50}}, // {rematches, rating gap}
+	{A: 0, B: 2, Cost: minipair.Cost{1, 10}},
+	// ...
+}
+pairs, unmatched, err := minipair.Match(n, edges)
+```
+
+For a bye, add a phantom node with an edge to every player, priced by how
+acceptable a bye is for them.
+
 ## Commands
 
 - `go run ./cmd/demo` simulates a multi-round tournament and prints pairings
   and standings (`-rounds`, `-seed`, `-closest`).
 - `go run ./cmd/bench <players>` measures pairing time for a field of the
   given size.
+
+## Dependencies
+
+The matching uses a fork of `github.com/std000/mvm-go`, selected by a
+`replace` in `go.mod`. Go ignores `replace` in dependencies, so a module
+importing minipair must repeat it:
+
+```
+replace github.com/std000/mvm-go => github.com/kalafut/mvm-go v0.0.0-20261101221550-328b009c2684
+```
 
 ## Limitations
 
